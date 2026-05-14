@@ -296,9 +296,12 @@ export default function Home() {
   const dedupWithinBatch = true;
   const dedupAgainstCrm = true;
 
-  // Active validation rule (read-only here; configured under /settings)
+  // Active validation rule (configured under /settings, also pickable inline in Destination).
   const [activeRuleIds, setActiveRuleIds] = useState<Partial<Record<HsObjectId, string>>>({});
   const [activeRule, setActiveRule] = useState<SavedValidationRule | null>(null);
+  // List of rules available for the current object type — feeds the Destination-step selector.
+  const [availableRules, setAvailableRules] = useState<SavedValidationRule[]>([]);
+  const [availableRulesLoading, setAvailableRulesLoading] = useState(false);
 
   // Mapping step UI
   const [showAllMappings, setShowAllMappings] = useState(false);
@@ -415,19 +418,23 @@ export default function Home() {
   };
 
   useEffect(() => {
-    const id = activeRuleIds[objectType];
-    if (!id) {
-      setActiveRule(null);
-      return;
-    }
     let cancelled = false;
+    setAvailableRulesLoading(true);
     fetch(`/api/validation-rules?object_type=${objectType}`)
       .then((r) => r.json())
       .then((data: { ok: boolean; rules?: SavedValidationRule[] }) => {
         if (cancelled) return;
-        const match = data.ok ? data.rules?.find((r) => r.id === id) : undefined;
+        const rules = data.ok ? (data.rules ?? []) : [];
+        setAvailableRules(rules);
+        const id = activeRuleIds[objectType];
+        if (!id) {
+          setActiveRule(null);
+          return;
+        }
+        const match = rules.find((r) => r.id === id);
         if (!match) {
           setActiveRule(null);
+          // Stored ID no longer exists — clear it from persistence.
           const next = { ...activeRuleIds };
           delete next[objectType];
           persistActiveRuleIds(next);
@@ -436,12 +443,25 @@ export default function Home() {
         setActiveRule(match);
       })
       .catch(() => {
-        if (!cancelled) setActiveRule(null);
+        if (!cancelled) {
+          setAvailableRules([]);
+          setActiveRule(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAvailableRulesLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, [objectType, activeRuleIds]);
+
+  const handleActiveRuleSelect = (ruleId: string) => {
+    const next = { ...activeRuleIds };
+    if (ruleId) next[objectType] = ruleId;
+    else delete next[objectType];
+    persistActiveRuleIds(next);
+  };
 
   useEffect(() => {
     if (!objectConfig.supportsPipeline) {
@@ -1054,6 +1074,10 @@ export default function Home() {
           hubspotConnectionsLoading={hubspotConnectionsLoading}
           selectedHubspotId={selectedHubspotId}
           onSelectHubspot={handleHubspotSelect}
+          availableRules={availableRules}
+          availableRulesLoading={availableRulesLoading}
+          activeRuleId={activeRule?.id ?? ""}
+          onSelectRule={handleActiveRuleSelect}
           onBack={() => setCurrentStep(1)}
           onContinue={() => setCurrentStep(3)}
           canContinue={canAdvanceFromStep2}
@@ -1609,6 +1633,10 @@ type DestinationStepProps = {
   hubspotConnectionsLoading: boolean;
   selectedHubspotId: string;
   onSelectHubspot: (id: string) => void;
+  availableRules: SavedValidationRule[];
+  availableRulesLoading: boolean;
+  activeRuleId: string;
+  onSelectRule: (ruleId: string) => void;
   onBack: () => void;
   onContinue: () => void;
   canContinue: boolean;
@@ -1621,6 +1649,10 @@ function DestinationStep({
   hubspotConnectionsLoading,
   selectedHubspotId,
   onSelectHubspot,
+  availableRules,
+  availableRulesLoading,
+  activeRuleId,
+  onSelectRule,
   onBack,
   onContinue,
   canContinue,
@@ -1714,6 +1746,58 @@ function DestinationStep({
                         Default
                       </Badge>
                     )}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold text-gray-900">Validation profile</h3>
+            <p className="text-sm text-gray-500">
+              Optionally enforce a saved validation rule on every row before import.
+            </p>
+          </div>
+          <Link
+            href="/settings"
+            className="shrink-0 text-xs font-medium text-emerald-600 underline-offset-4 hover:underline"
+          >
+            Manage profiles →
+          </Link>
+        </div>
+        {availableRulesLoading ? (
+          <p className="flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+          </p>
+        ) : availableRules.length === 0 ? (
+          <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
+            No saved validation profiles for {HS_OBJECTS[objectType].label.toLowerCase()} yet.{" "}
+            <Link href="/settings" className="font-medium text-emerald-600 underline">
+              Create one in Settings
+            </Link>
+            , or continue without one.
+          </p>
+        ) : (
+          <Select
+            value={activeRuleId || "__none__"}
+            onValueChange={(v) => onSelectRule(v === "__none__" ? "" : v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="No validation" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">No validation</SelectItem>
+              {availableRules.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  <span className="flex items-center gap-2">
+                    <span>{r.label}</span>
+                    <span className="text-xs text-gray-500">
+                      · {r.rules.fields.length} field rule(s)
+                    </span>
                   </span>
                 </SelectItem>
               ))}

@@ -57,12 +57,14 @@ export async function POST(request: Request) {
       } catch (err) {
         fatal = (err as Error).message;
         write({ type: "fatal", error: fatal });
-      } finally {
-        controller.close();
       }
 
-      // Persist a single history row. Best-effort: failures here are logged
-      // but never crash the request.
+      // Persist a single history row BEFORE closing the stream. On serverless
+      // platforms (Vercel) the function instance is terminated as soon as the
+      // response stream closes — any awaited work after controller.close()
+      // can be killed mid-flight, which is why history rows were going
+      // missing in production. Doing it here keeps it inside the request's
+      // execution budget. Best-effort: failures are logged, never thrown.
       try {
         await persistImportHistory(input, {
           rowResults: collectedRows,
@@ -73,6 +75,8 @@ export async function POST(request: Request) {
       } catch (err) {
         console.error("Failed to persist import history:", err);
       }
+
+      controller.close();
     },
   });
 
