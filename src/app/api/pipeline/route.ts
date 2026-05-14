@@ -1,5 +1,6 @@
 import { runPipeline } from "@/lib/pipeline/runner";
 import type { PipelineEvent, PipelineInput, RowResult, StageId } from "@/lib/pipeline/types";
+import { getUserContext, unauthorizedResponse } from "@/lib/supabase/user-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,9 @@ type FailedRecord = {
 };
 
 export async function POST(request: Request) {
+  const userCtx = await getUserContext();
+  if (!userCtx) return unauthorizedResponse();
+
   let input: PipelineInput;
   try {
     input = (await request.json()) as PipelineInput;
@@ -47,7 +51,7 @@ export async function POST(request: Request) {
       };
 
       try {
-        for await (const event of runPipeline(input)) {
+        for await (const event of runPipeline(input, { accessToken: userCtx.accessToken })) {
           write(event);
           collectEvent(event, collectedRows, droppedByStage);
           if (event.type === "done") {
@@ -66,7 +70,7 @@ export async function POST(request: Request) {
       // missing in production. Doing it here keeps it inside the request's
       // execution budget. Best-effort: failures are logged, never thrown.
       try {
-        await persistImportHistory(input, {
+        await persistImportHistory(input, userCtx, {
           rowResults: collectedRows,
           droppedByStage,
           durationMs: durationMs || Date.now() - startedAt,
@@ -112,6 +116,7 @@ function collectEvent(
 
 async function persistImportHistory(
   input: PipelineInput,
+  userCtx: { userId: string; accessToken: string },
   result: {
     rowResults: RowResult[];
     droppedByStage: Map<StageId, { sourceIndex: number; reasons: string[] }[]>;
@@ -162,6 +167,7 @@ async function persistImportHistory(
   failedRecords.sort((a, b) => a.sourceIndex - b.sourceIndex);
 
   const body = {
+    user_id: userCtx.userId,
     object_type: input.objectType,
     source_label: input.sourceLabel ?? null,
     hubspot_connection_id: input.hubspotConnectionId ?? null,
@@ -182,7 +188,7 @@ async function persistImportHistory(
     method: "POST",
     headers: {
       apikey: SUPA_KEY,
-      Authorization: `Bearer ${SUPA_KEY}`,
+      Authorization: `Bearer ${userCtx.accessToken}`,
       "Content-Type": "application/json",
       Prefer: "return=minimal",
     },

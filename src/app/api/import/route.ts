@@ -1,6 +1,7 @@
 import { getHsObject, type HsObjectConfig } from "@/lib/hubspot-objects";
 import { hubspotFetch } from "@/lib/hubspot/fetch";
 import { getActiveHubspotToken, HUBSPOT_NOT_CONFIGURED_ERROR } from "@/lib/hubspot/token";
+import { getUserContext, unauthorizedResponse } from "@/lib/supabase/user-context";
 
 function resolveNameValue(row: Record<string, unknown>, obj: HsObjectConfig): string | null {
   for (const alias of obj.nameAliases) {
@@ -11,7 +12,10 @@ function resolveNameValue(row: Record<string, unknown>, obj: HsObjectConfig): st
 }
 
 export async function POST(request: Request) {
-  const token = await getActiveHubspotToken();
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
+
+  const token = await getActiveHubspotToken(ctx.accessToken);
   if (!token) {
     return Response.json({ ok: false, error: HUBSPOT_NOT_CONFIGURED_ERROR }, { status: 401 });
   }

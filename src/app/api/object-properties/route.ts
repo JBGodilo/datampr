@@ -1,6 +1,7 @@
 import { getHsObject } from "@/lib/hubspot-objects";
 import { hubspotFetch } from "@/lib/hubspot/fetch";
 import { HUBSPOT_NOT_CONFIGURED_ERROR, resolveHubspotToken } from "@/lib/hubspot/token";
+import { getUserContext, unauthorizedResponse } from "@/lib/supabase/user-context";
 
 type HsProperty = {
   name: string;
@@ -43,9 +44,12 @@ const PROPERTY_TYPE_MAP: Record<NewPropertyType, { type: string; fieldType: stri
 const PROPERTY_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 export async function GET(request: Request) {
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
+
   const url = new URL(request.url);
   const connectionId = url.searchParams.get("hubspotConnectionId");
-  const token = await resolveHubspotToken(connectionId);
+  const token = await resolveHubspotToken(connectionId, ctx.accessToken);
   if (!token) {
     return Response.json({ ok: false, error: HUBSPOT_NOT_CONFIGURED_ERROR }, { status: 401 });
   }
@@ -118,6 +122,9 @@ function normalizeOptions(raw: unknown): NewPropertyOption[] | null {
 }
 
 export async function POST(request: Request) {
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
+
   let body: {
     hubspotConnectionId?: unknown;
     objectType?: unknown;
@@ -134,7 +141,7 @@ export async function POST(request: Request) {
 
   const connectionId =
     typeof body.hubspotConnectionId === "string" ? body.hubspotConnectionId : null;
-  const token = await resolveHubspotToken(connectionId);
+  const token = await resolveHubspotToken(connectionId, ctx.accessToken);
   if (!token) {
     return Response.json({ ok: false, error: HUBSPOT_NOT_CONFIGURED_ERROR }, { status: 401 });
   }

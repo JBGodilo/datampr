@@ -1,8 +1,12 @@
 import type { HsObjectId } from "@/lib/hubspot-objects";
 import type { StageId } from "@/lib/pipeline/types";
+import {
+  getUserContext,
+  supabaseRestUrl,
+  supabaseUserHeaders,
+  unauthorizedResponse,
+} from "@/lib/supabase/user-context";
 
-const SUPA_URL = process.env.SUPABASE_URL ?? "";
-const SUPA_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
 const TABLE = "import_history";
 
 export type SuccessfulHistoryRecord = {
@@ -37,19 +41,9 @@ export type ImportHistoryRow = {
   failed_records: FailedHistoryRecord[];
 };
 
-function envError() {
-  if (!SUPA_URL || !SUPA_KEY) {
-    return Response.json(
-      { ok: false, error: "SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY is not set." },
-      { status: 500 },
-    );
-  }
-  return null;
-}
-
 export async function GET(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 50));
@@ -60,11 +54,8 @@ export async function GET(request: Request) {
     limit: String(limit),
   });
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?${params.toString()}`, {
-    headers: {
-      apikey: SUPA_KEY,
-      Authorization: `Bearer ${SUPA_KEY}`,
-    },
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?${params.toString()}`, {
+    headers: supabaseUserHeaders(ctx.accessToken),
     cache: "no-store",
   });
 

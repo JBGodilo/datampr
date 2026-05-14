@@ -16,14 +16,17 @@ import type {
 } from "./types";
 import { validate } from "./validate";
 
-async function loadValidationRule(id: string): Promise<ValidationRuleSet | null> {
+async function loadValidationRule(
+  id: string,
+  userAccessToken: string,
+): Promise<ValidationRuleSet | null> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) return null;
   const res = await fetch(
     `${url}/rest/v1/object_validation_rules?id=eq.${encodeURIComponent(id)}&select=rules`,
     {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      headers: { apikey: key, Authorization: `Bearer ${userAccessToken}` },
       cache: "no-store",
     },
   );
@@ -31,6 +34,10 @@ async function loadValidationRule(id: string): Promise<ValidationRuleSet | null>
   const rows = (await res.json()) as { rules?: ValidationRuleSet }[];
   return rows[0]?.rules ?? null;
 }
+
+export type PipelineUserContext = {
+  accessToken: string;
+};
 
 async function* runStage<T>(
   stage: StageId,
@@ -50,8 +57,11 @@ async function* runStage<T>(
   }
 }
 
-export async function* runPipeline(input: PipelineInput): AsyncGenerator<PipelineEvent> {
-  const hubspotToken = await resolveHubspotToken(input.hubspotConnectionId);
+export async function* runPipeline(
+  input: PipelineInput,
+  userCtx: PipelineUserContext,
+): AsyncGenerator<PipelineEvent> {
+  const hubspotToken = await resolveHubspotToken(input.hubspotConnectionId, userCtx.accessToken);
   if (!hubspotToken) {
     yield { type: "stage:error", stage: "normalize", error: HUBSPOT_NOT_CONFIGURED_ERROR };
     return;
@@ -67,7 +77,9 @@ export async function* runPipeline(input: PipelineInput): AsyncGenerator<Pipelin
     return;
   }
 
-  const ruleSet = input.validationRuleId ? await loadValidationRule(input.validationRuleId) : null;
+  const ruleSet = input.validationRuleId
+    ? await loadValidationRule(input.validationRuleId, userCtx.accessToken)
+    : null;
   const dedupOptions = input.dedupOptions ?? { withinBatch: true, againstCrm: true };
 
   const initialRows: PipelineRow[] = input.rows.map((values, i) => ({

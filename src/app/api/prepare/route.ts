@@ -1,5 +1,6 @@
 import { getHsObject } from "@/lib/hubspot-objects";
 import { getActiveHubspotToken, HUBSPOT_NOT_CONFIGURED_ERROR } from "@/lib/hubspot/token";
+import { getUserContext, unauthorizedResponse } from "@/lib/supabase/user-context";
 
 function toPropertyName(label: string): string {
   return (
@@ -14,7 +15,10 @@ function toPropertyName(label: string): string {
 }
 
 export async function POST(request: Request) {
-  const token = await getActiveHubspotToken();
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
+
+  const token = await getActiveHubspotToken(ctx.accessToken);
   if (!token) {
     return Response.json({ ok: false, error: HUBSPOT_NOT_CONFIGURED_ERROR }, { status: 401 });
   }

@@ -1,5 +1,10 @@
-const SUPA_URL = process.env.SUPABASE_URL ?? "";
-const SUPA_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
+import {
+  getUserContext,
+  supabaseRestUrl,
+  supabaseUserHeaders,
+  unauthorizedResponse,
+} from "@/lib/supabase/user-context";
+
 const TABLE = "data_source_credentials";
 
 type SavedCredential = {
@@ -10,41 +15,22 @@ type SavedCredential = {
   created_at: string;
 };
 
-function envError() {
-  if (!SUPA_URL || !SUPA_KEY) {
-    return Response.json(
-      { ok: false, error: "SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY is not set." },
-      { status: 500 },
-    );
-  }
-  return null;
-}
-
-function headers(extra: Record<string, string> = {}) {
-  return {
-    apikey: SUPA_KEY,
-    Authorization: `Bearer ${SUPA_KEY}`,
-    "Content-Type": "application/json",
-    ...extra,
-  };
-}
-
 async function readSupabaseError(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
   return body.message ?? body.error ?? `Supabase error ${res.status}`;
 }
 
 export async function GET(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const source = url.searchParams.get("source");
   const params = new URLSearchParams({ select: "*", order: "created_at.desc" });
   if (source) params.set("source", `eq.${source}`);
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?${params.toString()}`, {
-    headers: headers(),
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?${params.toString()}`, {
+    headers: supabaseUserHeaders(ctx.accessToken),
     cache: "no-store",
   });
 
@@ -60,8 +46,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   let body: { source?: string; label?: string; config?: Record<string, unknown> };
   try {
@@ -80,10 +66,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}`, {
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}`, {
     method: "POST",
-    headers: headers({ Prefer: "return=representation" }),
-    body: JSON.stringify({ source, label, config }),
+    headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=representation" }),
+    body: JSON.stringify({ source, label, config, user_id: ctx.userId }),
   });
 
   if (!res.ok) {
@@ -98,8 +84,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
@@ -107,9 +93,9 @@ export async function DELETE(request: Request) {
     return Response.json({ ok: false, error: "id is required." }, { status: 400 });
   }
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: headers({ Prefer: "return=minimal" }),
+    headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=minimal" }),
   });
 
   if (!res.ok) {

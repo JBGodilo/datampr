@@ -1,8 +1,12 @@
 import type { HsObjectId } from "@/lib/hubspot-objects";
+import {
+  getUserContext,
+  supabaseRestUrl,
+  supabaseUserHeaders,
+  unauthorizedResponse,
+} from "@/lib/supabase/user-context";
 import type { ValidationRuleSet } from "@/lib/validators";
 
-const SUPA_URL = process.env.SUPABASE_URL ?? "";
-const SUPA_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
 const TABLE = "object_validation_rules";
 
 const ALLOWED_OBJECT_TYPES: readonly HsObjectId[] = ["contacts", "companies", "deals", "tickets"];
@@ -15,25 +19,6 @@ type SavedRule = {
   rules: ValidationRuleSet;
   created_at: string;
 };
-
-function envError() {
-  if (!SUPA_URL || !SUPA_KEY) {
-    return Response.json(
-      { ok: false, error: "SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY is not set." },
-      { status: 500 },
-    );
-  }
-  return null;
-}
-
-function headers(extra: Record<string, string> = {}) {
-  return {
-    apikey: SUPA_KEY,
-    Authorization: `Bearer ${SUPA_KEY}`,
-    "Content-Type": "application/json",
-    ...extra,
-  };
-}
 
 async function readSupabaseError(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
@@ -65,8 +50,8 @@ function normalizeRuleSet(raw: unknown): ValidationRuleSet | null {
 }
 
 export async function GET(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const objectType = url.searchParams.get("object_type");
@@ -81,8 +66,8 @@ export async function GET(request: Request) {
     params.set("object_type", `eq.${objectType}`);
   }
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?${params.toString()}`, {
-    headers: headers(),
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?${params.toString()}`, {
+    headers: supabaseUserHeaders(ctx.accessToken),
     cache: "no-store",
   });
 
@@ -98,8 +83,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   let body: { object_type?: unknown; label?: unknown; rules?: unknown };
   try {
@@ -123,10 +108,15 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "rules must be { fields: [...] }." }, { status: 400 });
   }
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}`, {
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}`, {
     method: "POST",
-    headers: headers({ Prefer: "return=representation" }),
-    body: JSON.stringify({ object_type: body.object_type, label, rules }),
+    headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=representation" }),
+    body: JSON.stringify({
+      object_type: body.object_type,
+      label,
+      rules,
+      user_id: ctx.userId,
+    }),
   });
 
   if (!res.ok) {
@@ -141,8 +131,8 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
@@ -179,9 +169,9 @@ export async function PUT(request: Request) {
     return Response.json({ ok: false, error: "Nothing to update." }, { status: 400 });
   }
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: headers({ Prefer: "return=representation" }),
+    headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=representation" }),
     body: JSON.stringify(patch),
   });
 
@@ -197,8 +187,8 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
@@ -206,9 +196,9 @@ export async function DELETE(request: Request) {
     return Response.json({ ok: false, error: "id is required." }, { status: 400 });
   }
 
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: headers({ Prefer: "return=minimal" }),
+    headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=minimal" }),
   });
 
   if (!res.ok) {

@@ -33,10 +33,29 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  // IMPORTANT: this call refreshes the session cookie if needed.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // IMPORTANT: this call refreshes the session cookie if needed. When the
+  // browser has a stale cookie whose refresh token no longer exists on the
+  // auth server (e.g. after a Site URL change, project rotation, or manual
+  // signout from another device), @supabase/ssr throws AuthApiError instead
+  // of returning `{ user: null }`. Catching it here keeps the middleware
+  // from 500ing every request — we just proceed as if the user is signed
+  // out, and the next render of /auth/login lets them re-auth cleanly.
+  let user: { id: string } | null = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch {
+    // Wipe the bad cookies so subsequent requests don't keep hitting the
+    // same throw. `scope: "local"` skips the auth-server roundtrip (which
+    // would also throw "refresh_token_not_found") and just clears the local
+    // session cookies via the setAll callback above.
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // ignore — cookies may not have cleared, but worst case the user
+      // hits the catch again next request.
+    }
+  }
 
   const pathname = request.nextUrl.pathname;
   const isAuth = isPublicPath(pathname);

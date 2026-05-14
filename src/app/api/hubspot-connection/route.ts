@@ -1,5 +1,10 @@
-const SUPA_URL = process.env.SUPABASE_URL ?? "";
-const SUPA_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
+import {
+  getUserContext,
+  supabaseRestUrl,
+  supabaseUserHeaders,
+  unauthorizedResponse,
+} from "@/lib/supabase/user-context";
+
 const TABLE = "data_source_credentials";
 
 type StoredConfig = {
@@ -20,25 +25,6 @@ type StoredCred = {
 
 type HubspotAccount = { portalId?: number; uiDomain?: string; accountType?: string };
 
-function envError() {
-  if (!SUPA_URL || !SUPA_KEY) {
-    return Response.json(
-      { ok: false, error: "SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY is not set." },
-      { status: 500 },
-    );
-  }
-  return null;
-}
-
-function supaHeaders(extra: Record<string, string> = {}) {
-  return {
-    apikey: SUPA_KEY,
-    Authorization: `Bearer ${SUPA_KEY}`,
-    "Content-Type": "application/json",
-    ...extra,
-  };
-}
-
 function tokenPreview(token: string): string {
   if (token.length <= 8) return "•".repeat(token.length);
   return `${token.slice(0, 4)}…${token.slice(-4)}`;
@@ -58,19 +44,19 @@ function toClient(row: StoredCred) {
   };
 }
 
-async function fetchAll(): Promise<StoredCred[]> {
+async function fetchAll(accessToken: string): Promise<StoredCred[]> {
   const res = await fetch(
-    `${SUPA_URL}/rest/v1/${TABLE}?source=eq.hubspot&select=*&order=created_at.desc`,
-    { headers: supaHeaders(), cache: "no-store" },
+    `${supabaseRestUrl()}/rest/v1/${TABLE}?source=eq.hubspot&select=*&order=created_at.desc`,
+    { headers: supabaseUserHeaders(accessToken), cache: "no-store" },
   );
   if (!res.ok) return [];
   return (await res.json()) as StoredCred[];
 }
 
-async function fetchById(id: string): Promise<StoredCred | null> {
+async function fetchById(id: string, accessToken: string): Promise<StoredCred | null> {
   const res = await fetch(
-    `${SUPA_URL}/rest/v1/${TABLE}?source=eq.hubspot&id=eq.${encodeURIComponent(id)}&select=*`,
-    { headers: supaHeaders(), cache: "no-store" },
+    `${supabaseRestUrl()}/rest/v1/${TABLE}?source=eq.hubspot&id=eq.${encodeURIComponent(id)}&select=*`,
+    { headers: supabaseUserHeaders(accessToken), cache: "no-store" },
   );
   if (!res.ok) return null;
   const rows = (await res.json()) as StoredCred[];
@@ -80,13 +66,14 @@ async function fetchById(id: string): Promise<StoredCred | null> {
 async function patchConfig(
   id: string,
   nextConfig: StoredConfig,
+  accessToken: string,
   nextLabel?: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const body: Record<string, unknown> = { config: nextConfig };
   if (nextLabel !== undefined) body.label = nextLabel;
-  const res = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
+  const res = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: supaHeaders({ Prefer: "return=representation" }),
+    headers: supabaseUserHeaders(accessToken, { Prefer: "return=representation" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -114,23 +101,24 @@ async function patchConfig(
 }
 
 async function clearAllDefaults(
+  accessToken: string,
   except?: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const rows = await fetchAll();
+  const rows = await fetchAll(accessToken);
   for (const r of rows) {
     if (r.id === except || !r.config?.isDefault) continue;
-    const result = await patchConfig(r.id, { ...r.config, isDefault: false });
+    const result = await patchConfig(r.id, { ...r.config, isDefault: false }, accessToken);
     if (!result.ok) return result;
   }
   return { ok: true };
 }
 
-async function ensureSomeDefault(): Promise<void> {
-  const rows = await fetchAll();
+async function ensureSomeDefault(accessToken: string): Promise<void> {
+  const rows = await fetchAll(accessToken);
   if (rows.length === 0) return;
   if (rows.some((r) => r.config?.isDefault)) return;
   const first = rows[0];
-  await patchConfig(first.id, { ...first.config, isDefault: true });
+  await patchConfig(first.id, { ...first.config, isDefault: true }, accessToken);
 }
 
 async function validateToken(
@@ -162,16 +150,16 @@ async function validateToken(
 }
 
 export async function GET() {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
-  const rows = await fetchAll();
+  const rows = await fetchAll(ctx.accessToken);
   return Response.json({ ok: true, connections: rows.map(toClient) });
 }
 
 export async function POST(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   let body: { token?: unknown; label?: unknown };
   try {
@@ -194,8 +182,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const existing = await fetchAll();
-  // If this portalId already exists, replace its token + label rather than duplicating.
+  const existing = await fetchAll(ctx.accessToken);
+  // If this portalId already exists for this user, replace its token + label rather than duplicating.
   const dupe = check.account.portalId
     ? existing.find((r) => r.config?.portalId === check.account.portalId)
     : undefined;
@@ -208,11 +196,11 @@ export async function POST(request: Request) {
       uiDomain: check.account.uiDomain,
       accountType: check.account.accountType,
     };
-    const updateResult = await patchConfig(dupe.id, nextConfig, label);
+    const updateResult = await patchConfig(dupe.id, nextConfig, ctx.accessToken, label);
     if (!updateResult.ok) {
       return Response.json({ ok: false, error: updateResult.error }, { status: 500 });
     }
-    const refreshed = await fetchById(dupe.id);
+    const refreshed = await fetchById(dupe.id, ctx.accessToken);
     if (!refreshed) {
       return Response.json({ ok: false, error: "Failed to read back updated connection." });
     }
@@ -225,12 +213,13 @@ export async function POST(request: Request) {
   }
 
   const isFirst = existing.length === 0;
-  const insertRes = await fetch(`${SUPA_URL}/rest/v1/${TABLE}`, {
+  const insertRes = await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}`, {
     method: "POST",
-    headers: supaHeaders({ Prefer: "return=representation" }),
+    headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=representation" }),
     body: JSON.stringify({
       source: "hubspot",
       label,
+      user_id: ctx.userId,
       config: {
         token,
         portalId: check.account.portalId,
@@ -258,8 +247,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   let body: { id?: unknown; isDefault?: unknown };
   try {
@@ -279,43 +268,43 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const row = await fetchById(id);
+  const row = await fetchById(id, ctx.accessToken);
   if (!row) {
     return Response.json({ ok: false, error: "Connection not found." }, { status: 404 });
   }
 
-  const clearResult = await clearAllDefaults(id);
+  const clearResult = await clearAllDefaults(ctx.accessToken, id);
   if (!clearResult.ok) {
     return Response.json({ ok: false, error: clearResult.error }, { status: 500 });
   }
-  const setResult = await patchConfig(id, { ...row.config, isDefault: true });
+  const setResult = await patchConfig(id, { ...row.config, isDefault: true }, ctx.accessToken);
   if (!setResult.ok) {
     return Response.json({ ok: false, error: setResult.error }, { status: 500 });
   }
-  const updated = await fetchById(id);
+  const updated = await fetchById(id, ctx.accessToken);
   return Response.json({ ok: true, connection: updated ? toClient(updated) : null });
 }
 
 export async function DELETE(request: Request) {
-  const err = envError();
-  if (err) return err;
+  const ctx = await getUserContext();
+  if (!ctx) return unauthorizedResponse();
 
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
   if (!id) {
-    // Legacy behavior: delete all HubSpot connections if no id given.
-    await fetch(`${SUPA_URL}/rest/v1/${TABLE}?source=eq.hubspot`, {
+    // Legacy behavior: delete all HubSpot connections (for this user) if no id given.
+    await fetch(`${supabaseRestUrl()}/rest/v1/${TABLE}?source=eq.hubspot`, {
       method: "DELETE",
-      headers: supaHeaders({ Prefer: "return=minimal" }),
+      headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=minimal" }),
     });
     return Response.json({ ok: true });
   }
 
   const res = await fetch(
-    `${SUPA_URL}/rest/v1/${TABLE}?source=eq.hubspot&id=eq.${encodeURIComponent(id)}`,
+    `${supabaseRestUrl()}/rest/v1/${TABLE}?source=eq.hubspot&id=eq.${encodeURIComponent(id)}`,
     {
       method: "DELETE",
-      headers: supaHeaders({ Prefer: "return=minimal" }),
+      headers: supabaseUserHeaders(ctx.accessToken, { Prefer: "return=minimal" }),
     },
   );
   if (!res.ok) {
@@ -326,6 +315,6 @@ export async function DELETE(request: Request) {
     );
   }
 
-  await ensureSomeDefault();
+  await ensureSomeDefault(ctx.accessToken);
   return Response.json({ ok: true });
 }
