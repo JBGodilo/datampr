@@ -26,7 +26,10 @@ export async function POST(request: Request) {
 
   const obj = getHsObject(objectType ?? "deals");
   if (!obj) {
-    return Response.json({ ok: false, error: `Unknown object type: ${objectType}` }, { status: 400 });
+    return Response.json(
+      { ok: false, error: `Unknown object type: ${objectType}` },
+      { status: 400 },
+    );
   }
 
   const columnMap: Record<string, string> = {};

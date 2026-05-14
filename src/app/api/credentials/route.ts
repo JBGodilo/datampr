@@ -49,7 +49,10 @@ export async function GET(request: Request) {
   });
 
   if (!res.ok) {
-    return Response.json({ ok: false, error: await readSupabaseError(res) }, { status: res.status });
+    return Response.json(
+      { ok: false, error: await readSupabaseError(res) },
+      { status: res.status },
+    );
   }
 
   const credentials = (await res.json()) as SavedCredential[];
@@ -84,7 +87,10 @@ export async function POST(request: Request) {
   });
 
   if (!res.ok) {
-    return Response.json({ ok: false, error: await readSupabaseError(res) }, { status: res.status });
+    return Response.json(
+      { ok: false, error: await readSupabaseError(res) },
+      { status: res.status },
+    );
   }
 
   const [credential] = (await res.json()) as SavedCredential[];
@@ -107,7 +113,10 @@ export async function DELETE(request: Request) {
   });
 
   if (!res.ok) {
-    return Response.json({ ok: false, error: await readSupabaseError(res) }, { status: res.status });
+    return Response.json(
+      { ok: false, error: await readSupabaseError(res) },
+      { status: res.status },
+    );
   }
 
   return Response.json({ ok: true });
