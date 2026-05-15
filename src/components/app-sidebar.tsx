@@ -17,7 +17,7 @@ import {
 import { SidebarUser } from "@/components/sidebar-user";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Import", icon: UploadCloud },
+  { href: "/import", label: "Import", icon: UploadCloud },
   { href: "/import-history", label: "Import history", icon: History },
   { href: "/hubspot-accounts", label: "HubSpot accounts", icon: Plug },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
@@ -46,8 +46,7 @@ export function AppSidebar() {
             <SidebarMenu>
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
-                const active =
-                  item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
+                const active = pathname === item.href || pathname?.startsWith(`${item.href}/`);
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton asChild isActive={active} tooltip={item.label}>

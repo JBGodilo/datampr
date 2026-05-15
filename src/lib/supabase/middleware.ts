@@ -6,6 +6,7 @@ type CookieToSet = { name: string; value: string; options: CookieOptions };
 const PUBLIC_PATH_PREFIXES = ["/auth", "/_next", "/favicon"];
 
 function isPublicPath(pathname: string): boolean {
+  if (pathname === "/") return true;
   return PUBLIC_PATH_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
@@ -58,18 +59,18 @@ export async function updateSession(request: NextRequest) {
   }
 
   const pathname = request.nextUrl.pathname;
-  const isAuth = isPublicPath(pathname);
+  const isPublic = isPublicPath(pathname);
 
-  if (!user && !isAuth) {
+  if (!user && !isPublic) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/auth/login";
     redirectUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && pathname === "/auth/login") {
+  if (user && (pathname === "/" || pathname === "/auth/login")) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/";
+    redirectUrl.pathname = "/import";
     redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
   }
